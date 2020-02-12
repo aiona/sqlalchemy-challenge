@@ -24,6 +24,9 @@ Base.prepare(engine, reflect=True)
 Station = Base.classes.station
 Measurement = Base.classes.measurement
 
+# Create our session from Python to the DB
+session = Session(engine)
+
 #################################################
 # Flask Setup
 #################################################
@@ -44,42 +47,31 @@ def welcome():
 		f"/api/v1.0/precipitation<br/>"
 		f"/api/v1.0/stations<br/>"
 		f"/api/v1.0/tobs<br/>"
-		f"/api/v1.0/<start><br/>"
-		"/api/v1.0/<start>/<end><br/>"
+		f"/api/v1.0/temp/start/end"
 	)
 	
 	
 @app.route("/api/v1.0/precipitation")
 def precipitation():
-    # Create our session from Python to the DB
-    session = Session(engine)
     
+    prev_year = dt.date(2017,8,23) - dt.timedelta(365)
+	   
     #Query database to get precipitation data by date
-    results = session.query(Measurement).all()
+    results = session.query(Measurement.date, Measurement.prcp).\
+        filter(Measurement.date >= prev_year).all()
 	
-	#Close session
-    session.close()
-	
+
     # Create a dictionary from the row data and append to precipitation data
-    precipitation_data = []
-    for result in results:
-        prcp_data = {}
-        prcp_data["date"] = result.date
-        prcp_data["prcp"] = result.prcp
-        precipitation_data.append(prcp_data)
-		
-    return jsonify(prcp_data)
+    precip = {date:prcp for date, prcp in results}
+    
+    return jsonify(precip)
 
 @app.route("/api/v1.0/stations")
 def stations():
-    # Create our session from Python to the DB
-    session = Session(engine)
 	
 	#Query db to get a list of stations
     results=session.query(Station.station).all()
     
-    #Close session
-    session.close()
 	
 	#Transform query results into list
     station_list = list(np.ravel(results))
@@ -89,8 +81,6 @@ def stations():
 
 @app.route("/api/v1.0/tobs")
 def temperatures():
-    #Create our session from Python to the DB
-    session = Session(engine)
     
     #Determine latest date
     latest_date = session.query(Measurement).order_by(Measurement.date.desc()).limit(1)
@@ -105,10 +95,9 @@ def temperatures():
     #Query DB to get dates and temperatures 1 year before 
     #Join Station and Measurement table
     results = session.query(Station.date, Measurement.tobs).\
-    .join(Measurement.station).filter(and_(Station.date <= latest_date, Station.date >= one_year_before))
+    join(Measurement.station).filter(and_(Station.date <= latest_date, Station.date >= one_year_before)).all()
     
-     #Close session
-    session.close()
+     
 
     #list
     temps_list = []
@@ -120,44 +109,28 @@ def temperatures():
     #Jsonify
     return jsonify(temps_list)
 
-@app.route("/api/v1.0/start:Y-M-D")
-def after_start(start_date):
-    
-    #Get user input for start date   
-    start_date = input("Please enter a date in the following format: YYYY-MM-DD")
-    
-    #Query DB    
-    results = session.query(func.min(Measurement.tobs), func.avg(Measurement.tobs), func.max(Measurement.tobs)).\
-    join(Station.station).filter(Measurement.date >= start_date).all()
-    
-    #Close session
-    session.close()
-    
-    #Results to list
-    start_list = list(np.ravel(results))
-    
-    #Return as JSON
-    return jsonify(start_list)
+@app.route("/api/v1.0/temp/<start>")
         
-@app.route("/api/v1.0/start:Y-M-D/end:Y-M-D")
-def date_range(start_date, end_date):
+@app.route("/api/v1.0/temp/<start>/<end>")
+def stats(start=None, end=None):
     
-    start_date = input("Please enter a date in the following format: YYYY-MM-DD")
-    end_date = input("Please enter a date in the following format: YYYY-MM-DD")
+    sel = [func.min(Measurement.tobs), func.avg(Measurement.tobs), func.max(Measurement.tobs)]
 
-    results = session.query(func.min(Measurement.tobs), func.avg(Measurement.tobs), func.max(Measurement.tobs)).\
-    join(Station.station).filter(Measurement.date >= start_date).filter(Measurement.date <= end_date).all()
+    if not end:
+
+        results = session.query(*sel).\
+        filter(Measurement.date >= start).all()
+        temps = list(np.ravel(results)) 
+        return jsonify(temps) 
+	   
+	   
+    results = session.query(*sel).\
+    filter(Measurement.date >= start).\
+    filter(Measurement.date <= end).all()
+    temps = list(np.ravel(results))
+    return jsonify(temps)
 	
-    #Close session
-    session.close()
-	
-    #Results to list
-    range_list = list(np.ravel(results))
-    
-    #Return as JSON
-    return jsonify(range_list)
-	
-	
+		
 	
 if __name__ == '__main__':
     app.run(debug=True)
